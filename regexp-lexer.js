@@ -6,6 +6,34 @@
 var lexParser = require('lex-parser');
 var version = require('./package.json').version;
 
+
+/*
+@params rules
+        rules: [
+           ["x", "return 'X';" ],
+           ["y", "return 'Y';" ],
+           ["{digit}+", "return 'NAT';" ],
+           ["$", "return 'EOF';" ]
+       ]
+@params macros
+        macros: {
+            "digit": "[0-9]"
+        },
+@params actions: List<string>
+		code to be inserted into the final switch function
+	
+@params tokens
+	terminals of Gramma Syntax
+@params startConditions
+	{
+		[key: string]: {
+			inclusive: boolean,
+			rules: 
+		}
+	}
+@params caseless
+	if true, ignore case when matching
+*/
 // expand macros and convert matchers to RegExp's
 function prepareRules(rules, macros, actions, tokens, startConditions, caseless) {
     var m,i,k,action,conditions,
@@ -22,6 +50,7 @@ function prepareRules(rules, macros, actions, tokens, startConditions, caseless)
     actions.push('switch($avoiding_name_collisions) {');
 
     for (i=0;i < rules.length; i++) {
+		// is not Array
         if (Object.prototype.toString.apply(rules[i][0]) !== '[object Array]') {
             // implicit add to all inclusive start conditions
             for (k in startConditions) {
@@ -36,9 +65,21 @@ function prepareRules(rules, macros, actions, tokens, startConditions, caseless)
             }
             rules[i].shift();
         } else {
+			/*
+			Rules: 
+				[["TEST"], "x", "return 'T';" ],
+				[["TEST"], "y", "this.begin('INITIAL'); return 'TY';" ],
+
+			handle rules like above
+
+
+			*/
+
             // Add to explicit start conditions
+			// this return ['TEST']
             conditions = rules[i].shift();
             for (k=0;k<conditions.length;k++) {
+				// push rule's index to its corresponding stack
                 startConditions[conditions[k]].rules.push(i);
             }
         }
@@ -53,8 +94,10 @@ function prepareRules(rules, macros, actions, tokens, startConditions, caseless)
             m = new RegExp("^(?:" + m + ")", caseless ? 'i':'');
         }
         newRules.push(m);
+
+		// process action, keep statements inside function body
         if (typeof rules[i][1] === 'function') {
-            rules[i][1] = String(rules[i][1]).replace(/^\s*function \(\)\s?\{/, '').replace(/\}\s*$/, '');
+            rules[i][1] = String(rules[i][1]).replace(/^\s*function \w+?\(\)\s?\{/, '').replace(/\}\s*$/, '');
         }
         action = rules[i][1];
         if (tokens && action.match(/return '[^']+'/)) {
@@ -68,6 +111,8 @@ function prepareRules(rules, macros, actions, tokens, startConditions, caseless)
 }
 
 // expand macros within macros
+// m: see test case `test nested macros`
+// this is simple yet effective approach, but not for Circular Dependent case
 function prepareMacros (macros) {
     var cont = true,
         m,i,k,mnew;
@@ -75,7 +120,9 @@ function prepareMacros (macros) {
         cont = false;
         for (i in macros) if (macros.hasOwnProperty(i)) {
             m = macros[i];
+            // i!= k, exclude same macro rule
             for (k in macros) if (macros.hasOwnProperty(k) && i !== k) {
+				// t: split has some interesting effects
                 mnew = m.split("{" + k + "}").join('(' + macros[k] + ')');
                 if (mnew !== m) {
                     cont = true;
@@ -91,6 +138,7 @@ function prepareStartConditions (conditions) {
     var sc,
         hash = {};
     for (sc in conditions) if (conditions.hasOwnProperty(sc)) {
+		// not condtions[sc]
         hash[sc] = {rules:[],inclusive:!!!conditions[sc]};
     }
     return hash;
@@ -101,6 +149,7 @@ function buildActions (dict, tokens) {
     var tok;
     var toks = {};
 
+	// invser key/value of tokens
     for (tok in tokens) {
         toks[tokens[tok]] = tok;
     }
@@ -111,16 +160,33 @@ function buildActions (dict, tokens) {
 
     this.rules = prepareRules(dict.rules, dict.macros, actions, tokens && toks, this.conditions, this.options["case-insensitive"]);
     var fun = actions.join("\n");
+
+	/*
+	yytext: current matching text
+	yyleng: yytext.length
+	yylineno: current line number
+	yyloc: [start, ends]
+	*/
     "yytext yyleng yylineno yylloc".split(' ').forEach(function (yy) {
+		// add yy_. to all yy*<variables>
+		// yy_ holds all the matching state
         fun = fun.replace(new RegExp("\\b(" + yy + ")\\b", "g"), "yy_.$1");
     });
 
+	// $avoiding_name_collisions, currently matching rule
     return "function anonymous(yy,yy_,$avoiding_name_collisions,YY_START) {" + fun + "\n}";
 }
 
+
+/*
+
+	tokens:
+		var tokens = {"2":"X", "3":"Y", "4":"EOF"};
+*/
 function RegExpLexer (dict, input, tokens) {
     var opts = processGrammar(dict, tokens);
     var source = generateModuleBody(opts);
+	// create object from js string
     var lexer = eval(source);
 
     lexer.yy = {};
@@ -282,26 +348,43 @@ RegExpLexer.prototype = {
         if (this.options.backtrack_lexer) {
             // save context
             backup = {
+				// line no.
                 yylineno: this.yylineno,
                 yylloc: {
+					// prematched line
                     first_line: this.yylloc.first_line,
+					// current matched line
                     last_line: this.last_line,
+					// prematched column
                     first_column: this.yylloc.first_column,
+					// current matched col
                     last_column: this.yylloc.last_column
                 },
+				// current match text
                 yytext: this.yytext,
+				// current match text
                 match: this.match,
+				// current regex match group
                 matches: this.matches,
+				// all previous matches
                 matched: this.matched,
+				// yytext.length
                 yyleng: this.yyleng,
+				// 
                 offset: this.offset,
+				// 
                 _more: this._more,
+				// remaining text
                 _input: this._input,
+				// 
                 yy: this.yy,
+				// 
                 conditionStack: this.conditionStack.slice(0),
+				//
                 done: this.done
             };
             if (this.options.ranges) {
+				// range [start, end]
                 backup.yylloc.range = this.yylloc.range.slice(0);
             }
         }
@@ -311,10 +394,16 @@ RegExpLexer.prototype = {
             this.yylineno += lines.length;
         }
         this.yylloc = {
+			// previous matched line, start from 1
             first_line: this.yylloc.last_line,
+			// current matched line
             last_line: this.yylineno + 1,
+			// previous matched column, start from 0
             first_column: this.yylloc.last_column,
+			// current matched column
             last_column: lines ?
+			// lines would be ['\n', '\n', '\n']
+			// so when lines exits, this would reset last_column to 0
                          lines[lines.length - 1].length - lines[lines.length - 1].match(/\r?\n?/)[0].length :
                          this.yylloc.last_column + match[0].length
         };
@@ -329,13 +418,20 @@ RegExpLexer.prototype = {
         this._backtrack = false;
         this._input = this._input.slice(match[0].length);
         this.matched += match[0];
+		/*
+			* this.yy: {}
+			* indexed_rule: number
+			* conditionStack: Array<string>,  eg. ['initial']
+		*/
         token = this.performAction.call(this, this.yy, this, indexed_rule, this.conditionStack[this.conditionStack.length - 1]);
+		// if has more input, reset this.done
         if (this.done && this._input) {
             this.done = false;
         }
         if (token) {
             return token;
         } else if (this._backtrack) {
+			// unmatch, reset to previous state, and try next rule
             // recover context
             for (var k in backup) {
                 this[k] = backup[k];
@@ -358,13 +454,18 @@ RegExpLexer.prototype = {
             match,
             tempMatch,
             index;
+
+		// if has more, don't reset yytext and match
         if (!this._more) {
             this.yytext = '';
             this.match = '';
         }
+		// rules: List<number>
+		// eg.[0, 1, 2]
         var rules = this._currentRules();
         for (var i = 0; i < rules.length; i++) {
             tempMatch = this._input.match(this.rules[rules[i]]);
+			// has a match and only the longest match
             if (tempMatch && (!match || tempMatch[0].length > match[0].length)) {
                 match = tempMatch;
                 index = i;
@@ -406,6 +507,7 @@ RegExpLexer.prototype = {
     // return next match that has a token
     lex: function lex () {
         var r = this.next();
+		// if returns false, continously trying to find next token.
         if (r) {
             return r;
         } else {
@@ -424,11 +526,21 @@ RegExpLexer.prototype = {
         if (n > 0) {
             return this.conditionStack.pop();
         } else {
+			// 0 index is never poped
             return this.conditionStack[0];
         }
     },
 
     // produce the lexer rule set which is active for the currently active lexer condition state
+	/*
+	
+	interface condition {
+		[stackName: string]: {
+			rules: List<nubmer>,
+			inclusive: boolean
+		}
+	}
+	*/
     _currentRules: function _currentRules () {
         if (this.conditionStack.length && this.conditionStack[this.conditionStack.length - 1]) {
             return this.conditions[this.conditionStack[this.conditionStack.length - 1]].rules;
@@ -478,6 +590,7 @@ function processGrammar(dict, tokens) {
     opts.moduleType = opts.options.moduleType;
     opts.moduleName = opts.options.moduleName;
 
+	// t:?
     opts.conditions = prepareStartConditions(dict.startConditions);
     opts.conditions.INITIAL = {rules:[],inclusive:true};
 
@@ -503,6 +616,12 @@ function generateFromOpts (opt) {
     return code;
 }
 
+/*
+
+@param opt:
+	opt.options
+	opt.performAction
+*/
 function generateModuleBody (opt) {
     var functionDescriptions = {
         setInput: "resets the lexer, sets new input",
@@ -561,6 +680,7 @@ function generateModule(opt) {
           + generateModuleBody(opt);
 
     if (opt.moduleInclude) {
+		// t:?
         out += ";\n" + opt.moduleInclude;
     }
 
