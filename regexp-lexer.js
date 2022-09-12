@@ -50,7 +50,7 @@ function prepareRules(rules, macros, actions, tokens, startConditions, caseless)
     actions.push('switch($avoiding_name_collisions) {');
 
     for (i=0;i < rules.length; i++) {
-		// is not Array
+		// result[i][0] is not Array
         if (Object.prototype.toString.apply(rules[i][0]) !== '[object Array]') {
             // implicit add to all inclusive start conditions
             for (k in startConditions) {
@@ -266,6 +266,8 @@ RegExpLexer.prototype = {
         //this.yyleng -= len;
         this.offset -= len;
         var oldLines = this.match.split(/(?:\r\n?|\n)/g);
+		// m: match & yytext diverge from here
+		// t:? why only remove last char from this.match ? 
         this.match = this.match.substr(0, this.match.length - 1);
         this.matched = this.matched.substr(0, this.matched.length - 1);
 
@@ -279,8 +281,10 @@ RegExpLexer.prototype = {
             last_line: this.yylineno + 1,
             first_column: this.yylloc.first_column,
             last_column: lines ?
+			// m: I dont think this line matters, it should always use the second line as formula to calc the last_column
                 (lines.length === oldLines.length ? this.yylloc.first_column : 0)
                  + oldLines[oldLines.length - lines.length].length - lines[0].length :
+				// no lines, could be empty ch?
               this.yylloc.first_column - len
         };
 
@@ -480,6 +484,9 @@ RegExpLexer.prototype = {
                         // else: this is a lexer rule which consumes input without producing a token (e.g. whitespace)
                         return false;
                     }
+
+				// flex option would make the `matching against rule loop` continue
+				// since what flex essentially does it log unmatched chars
                 } else if (!this.options.flex) {
                     break;
                 }

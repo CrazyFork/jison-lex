@@ -5,6 +5,15 @@ meta:
 	
 ```
 
+## dev 
+
+```
+yarn 
+yarn test // in vscode debug terminal
+```
+
+
+## notes
 
 -> regex word boundary -  https://www.regular-expressions.info/wordboundaries.html
 
@@ -18,6 +27,11 @@ world world world<EOF>
 that means `\b` matches
 
 * `^`, `$`, and any non word character in between.
+
+
+Notes:
+* flex is case insensitive
+
 
 
 
@@ -91,7 +105,8 @@ start conditions
 
 > this rules defination creates two sub group 'TEST' and default, 
 > like TEST: Rules[], DEFAULT: Rules[]
-> when matching, action can pick one of the group inside which using rules to match text by using `begin(<GROUP_NAME>)` method.
+> when matching, action can pick one of the group by using `begin(<GROUP_NAME>)` method 
+> then the text matching will be done using rule inside that group
 
 ```
 exports["test inclusive start conditions"] = function() {
@@ -127,11 +142,134 @@ exports["test inclusive start conditions"] = function() {
 };
 ```
 
+start condition: exclusive rules
+
+> `exclusive`, if true, rules without explicit group name would not be added to this group
+> so in the following example, 'EAT' group only has rules with [1, 2] index. and the default
+> group 'INITIAL' will has all other non-explicit rules which are [0, 3, 4, 5]
+
+```
+exports["test exclusive start conditions"] = function() {
+    var dict = {
+        startConditions: {
+            "EAT": 1,
+            //     ^ exclusive set to true
+        },
+        rules: [
+            ["\\/\\/", "this.begin('EAT');" ],
+            [["EAT"], ".", "" ],
+            [["EAT"], "\\n", "this.begin('INITIAL');" ],
+            ["x", "return 'X';" ],
+            ["y", "return 'Y';" ],
+            ["$", "return 'EOF';" ]
+        ]
+    };
+    var input = "xy//yxteadh//ste\ny";
+    //               ^ from y , matching will be using rules inside 'EAT' group
+    //               . rule match a char but returns no token, so it swallows char until
+    //                            \n
+    //                            ^ switch to `INITIAL` group
+    //                             y
+    //                             ^ y is matched against rule 4, return 'Y'
+
+    var lexer = new RegExpLexer(dict);
+    lexer.setInput(input);
+
+    assert.equal(lexer.lex(), "X");
+    assert.equal(lexer.lex(), "Y");
+    assert.equal(lexer.lex(), "Y");
+    assert.equal(lexer.lex(), "EOF");
+};
+
+```
+
+start condition: star rule
+
+```
+exports["test star start condition"] = function() {
+    var dict = {
+        startConditions: {
+            "EAT": 1,
+        },
+        rules: [
+            ["\\/\\/", "this.begin('EAT');" ],
+            [["EAT"], ".", "" ],
+            ["x", "return 'X';" ],
+            ["y", "return 'Y';" ],
+            // match all condition stack
+            [["*"],"$", "return 'EOF';" ]
+        ]
+    };
+    var input = "xy//yxteadh//stey";
+
+    var lexer = new RegExpLexer(dict);
+    lexer.setInput(input);
+
+    assert.equal(lexer.lex(), "X");
+    assert.equal(lexer.lex(), "Y");
+    assert.equal(lexer.lex(), "EOF");
+};
+```
+
+Context lexer
+> this lib is context lexer, it allows parse using nested rule when certain condition are met
+> and can unput char from catched input
+
+```
+
+exports["test EOF unput"] = function() {
+    var dict = {
+        startConditions: {
+            "UN": 1,
+        },
+        rules: [
+          // switch UN rule group
+            ["U", "this.begin('UN');return 'U';" ],
+          // unput X, since no match are made, the lex continue
+            [["UN"],"$", "this.unput('X')" ],
+          // match X rule, pop out UN rule group
+            [["UN"],"X", "this.popState();return 'X';" ],
+            ["$", "return 'EOF'" ]
+        ]
+    };
+    var input = "U";
+
+    var lexer = new RegExpLexer(dict);
+    lexer.setInput(input);
+
+    assert.equal(lexer.lex(), "U");
+    assert.equal(lexer.lex(), "X");
+    assert.equal(lexer.lex(), "EOF");
+};
+```
 
 
 
+Backtracking
+> 
 
+```
 
+exports["test backtracking lexer reject() method"] = function() {
+    var dict = {
+        rules: [
+            // this.reject() would cause this rule to unmatch
+            ["[A-Z]+([0-9]+)", "if (this.matches[1].length) this.reject(); else return 'ID';" ],
+            ["[A-Z]+", "return 'WORD';" ],
+            ["[0-9]+", "return 'NUM';" ]
+        ],
+        options: {backtrack_lexer: true}
+    };
+    var input = "A5";
+
+    var lexer = new RegExpLexer(dict);
+    lexer.setInput(input);
+
+    assert.equal(lexer.lex(), "WORD");
+    assert.equal(lexer.lex(), "NUM");
+};
+
+```
 
 
 
